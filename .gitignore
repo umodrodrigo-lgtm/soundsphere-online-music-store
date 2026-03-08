@@ -1,0 +1,51 @@
+# ── Dependencies ──────────────────────────────────────────────────
+node_modules/
+.pnp
+.pnp.js
+
+# ── Environment / secrets ─────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+# Keep .env.example (safe placeholder)
+!.env.example
+
+# ── Build output ──────────────────────────────────────────────────
+dist/
+build/
+.vite/
+
+# ── Uploads (user-generated content, not tracked in git) ──────────
+backend/uploads/audio/*
+backend/uploads/images/artists/*
+backend/uploads/images/albums/*
+backend/uploads/images/banners/*
+backend/uploads/images/avatars/*
+# Keep the folder structure via .gitkeep
+!backend/uploads/**/.gitkeep
+
+# ── Logs ──────────────────────────────────────────────────────────
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ── Claude Code local settings ───────────────────────────────────
+.claude/
+
+# ── OS / editor ───────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+
+# ── Misc ──────────────────────────────────────────────────────────
+*.tsbuildinfo
+.eslintcache
+coverage/
