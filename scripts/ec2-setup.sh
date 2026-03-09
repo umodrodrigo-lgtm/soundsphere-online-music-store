@@ -1,7 +1,7 @@
 #!/bin/bash
 # ─────────────────────────────────────────────────────────────────────────────
 # SoundSphere — One-time EC2 setup script
-# Target OS : Amazon Linux 2023
+
 # Run as    : sudo bash ec2-setup.sh
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
