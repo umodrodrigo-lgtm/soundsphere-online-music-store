@@ -80,7 +80,7 @@ pipeline {
                             --exclude='node_modules/' \
                             --exclude='uploads/' \
                             backend/ \
-                            ${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_PATH}/backend/
+                            ${DEPLOY_HOST}:${DEPLOY_PATH}/backend/
                     """
 
                     // 4-c. Sync frontend build output
