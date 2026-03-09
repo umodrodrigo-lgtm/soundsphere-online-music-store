@@ -6,18 +6,18 @@ pipeline {
     }
 
     environment {
-        // Docker Hub
+        // Docker Hub — DOCKERHUB_CREDS_USR and DOCKERHUB_CREDS_PSW are auto-created
         DOCKERHUB_CREDS = credentials('dockerhub-credentials')
-        REPO_API        = "${DOCKERHUB_CREDS_USR}/soundsphere-api"
-        REPO_WEB        = "${DOCKERHUB_CREDS_USR}/soundsphere-web"
 
         // App EC2
         DEPLOY_HOST     = credentials('soundsphere-deploy-host')
         DEPLOY_USER     = 'ec2-user'
         DEPLOY_PATH     = '/opt/soundsphere'
 
-        // Default image tag before checkout
+        // Set at runtime in Checkout stage (after credentials are resolved)
         IMAGE_TAG       = 'latest'
+        REPO_API        = ''
+        REPO_WEB        = ''
     }
 
     options {
@@ -33,9 +33,11 @@ pipeline {
             steps {
                 checkout scm
                 script {
-                    env.IMAGE_TAG = sh(script: "git rev-parse --short=8 HEAD", returnStdout: true).trim()
+                    env.IMAGE_TAG = sh(script: 'git rev-parse --short=8 HEAD', returnStdout: true).trim()
+                    env.REPO_API  = "${env.DOCKERHUB_CREDS_USR}/soundsphere-api"
+                    env.REPO_WEB  = "${env.DOCKERHUB_CREDS_USR}/soundsphere-web"
                 }
-                echo "Branch: ${env.GIT_BRANCH}   Tag: ${env.IMAGE_TAG}"
+                echo "Branch: ${env.GIT_BRANCH}   Tag: ${env.IMAGE_TAG}   Repo: ${env.REPO_API}"
             }
         }
 
