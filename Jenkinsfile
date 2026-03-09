@@ -6,18 +6,13 @@ pipeline {
     }
 
     environment {
-        // Docker Hub — DOCKERHUB_CREDS_USR and DOCKERHUB_CREDS_PSW are auto-created
+        // Docker Hub — auto-creates DOCKERHUB_CREDS_USR and DOCKERHUB_CREDS_PSW
         DOCKERHUB_CREDS = credentials('dockerhub-credentials')
 
         // App EC2
-        DEPLOY_HOST     = credentials('soundsphere-deploy-host')
-        DEPLOY_USER     = 'ec2-user'
-        DEPLOY_PATH     = '/opt/soundsphere'
-
-        // Set at runtime in Checkout stage (after credentials are resolved)
-        IMAGE_TAG       = 'latest'
-        REPO_API        = ''
-        REPO_WEB        = ''
+        DEPLOY_HOST = credentials('soundsphere-deploy-host')
+        DEPLOY_USER = 'ec2-user'
+        DEPLOY_PATH = '/opt/soundsphere'
     }
 
     options {
@@ -33,28 +28,33 @@ pipeline {
             steps {
                 checkout scm
                 script {
+                    // Set at runtime so env block immutability is bypassed
                     env.IMAGE_TAG = sh(script: 'git rev-parse --short=8 HEAD', returnStdout: true).trim()
                     env.REPO_API  = "${env.DOCKERHUB_CREDS_USR}/soundsphere-api"
                     env.REPO_WEB  = "${env.DOCKERHUB_CREDS_USR}/soundsphere-web"
+                    echo "Branch: ${env.GIT_BRANCH}   Tag: ${env.IMAGE_TAG}   Repo: ${env.REPO_API}"
                 }
-                echo "Branch: ${env.GIT_BRANCH}   Tag: ${env.IMAGE_TAG}   Repo: ${env.REPO_API}"
             }
         }
 
         stage('Build Images') {
             steps {
-                sh "docker build -t ${env.REPO_API}:${env.IMAGE_TAG} -t ${env.REPO_API}:latest ./backend"
-                sh "docker build -t ${env.REPO_WEB}:${env.IMAGE_TAG} -t ${env.REPO_WEB}:latest ./frontend"
+                sh '''
+                    docker build -t $REPO_API:$IMAGE_TAG -t $REPO_API:latest ./backend
+                    docker build -t $REPO_WEB:$IMAGE_TAG -t $REPO_WEB:latest ./frontend
+                '''
             }
         }
 
         stage('Push to Docker Hub') {
             steps {
-                sh 'echo "${DOCKERHUB_CREDS_PSW}" | docker login -u "${DOCKERHUB_CREDS_USR}" --password-stdin'
-                sh "docker push ${env.REPO_API}:${env.IMAGE_TAG}"
-                sh "docker push ${env.REPO_API}:latest"
-                sh "docker push ${env.REPO_WEB}:${env.IMAGE_TAG}"
-                sh "docker push ${env.REPO_WEB}:latest"
+                sh 'echo "$DOCKERHUB_CREDS_PSW" | docker login -u "$DOCKERHUB_CREDS_USR" --password-stdin'
+                sh '''
+                    docker push $REPO_API:$IMAGE_TAG
+                    docker push $REPO_API:latest
+                    docker push $REPO_WEB:$IMAGE_TAG
+                    docker push $REPO_WEB:latest
+                '''
                 sh 'docker logout'
             }
         }
@@ -62,35 +62,31 @@ pipeline {
         stage('Deploy') {
             steps {
                 sshagent(credentials: ['soundsphere-deploy-key']) {
-                    sh """
-                        ssh -o StrictHostKeyChecking=no ${env.DEPLOY_USER}@${env.DEPLOY_HOST} "mkdir -p ${env.DEPLOY_PATH}"
-                    """
+                    sh 'ssh -o StrictHostKeyChecking=no $DEPLOY_USER@$DEPLOY_HOST "mkdir -p $DEPLOY_PATH"'
 
-                    sh """
+                    sh '''
                         scp -o StrictHostKeyChecking=no \
-                        docker-compose.prod.yml \
-                        ${env.DEPLOY_USER}@${env.DEPLOY_HOST}:${env.DEPLOY_PATH}/docker-compose.prod.yml
-                    """
+                            docker-compose.prod.yml \
+                            $DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/docker-compose.prod.yml
+                    '''
 
-                    sh """
+                    sh '''
                         scp -o StrictHostKeyChecking=no -r \
-                        database/ \
-                        ${env.DEPLOY_USER}@${env.DEPLOY_HOST}:${env.DEPLOY_PATH}/database/
-                    """
+                            database/ \
+                            $DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/database/
+                    '''
 
-                    sh """
-                        ssh -o StrictHostKeyChecking=no ${env.DEPLOY_USER}@${env.DEPLOY_HOST} '
+                    sh '''
+                        ssh -o StrictHostKeyChecking=no $DEPLOY_USER@$DEPLOY_HOST "
                             set -e
-                            cd ${env.DEPLOY_PATH}
-
-                            export IMAGE_TAG=${env.IMAGE_TAG}
-                            export DOCKERHUB_USER=${env.DOCKERHUB_CREDS_USR}
-
+                            cd $DEPLOY_PATH
+                            export IMAGE_TAG=$IMAGE_TAG
+                            export DOCKERHUB_USER=$DOCKERHUB_CREDS_USR
                             docker compose -f docker-compose.prod.yml pull
                             docker compose -f docker-compose.prod.yml up -d --remove-orphans
                             docker image prune -f
-                        '
-                    """
+                        "
+                    '''
                 }
             }
         }
@@ -98,15 +94,15 @@ pipeline {
         stage('Verify') {
             steps {
                 sshagent(credentials: ['soundsphere-deploy-key']) {
-                    sh """
-                        ssh -o StrictHostKeyChecking=no ${env.DEPLOY_USER}@${env.DEPLOY_HOST} '
+                    sh '''
+                        ssh -o StrictHostKeyChecking=no $DEPLOY_USER@$DEPLOY_HOST "
                             sleep 5
-                            STATUS=\$(curl -s -o /dev/null -w "%{http_code}" http://localhost/api/health)
-                            echo "Health check: \$STATUS"
-                            [ "\$STATUS" = "200" ] || { echo "FAILED"; exit 1; }
-                            echo "Deployment OK"
-                        '
-                    """
+                            STATUS=\$(curl -s -o /dev/null -w '%{http_code}' http://localhost/api/health)
+                            echo Health check: \$STATUS
+                            [ \"\$STATUS\" = '200' ] || { echo FAILED; exit 1; }
+                            echo Deployment OK
+                        "
+                    '''
                 }
             }
         }
@@ -123,8 +119,8 @@ pipeline {
             script {
                 try {
                     if (env.REPO_API && env.IMAGE_TAG) {
-                        sh "docker rmi ${env.REPO_API}:${env.IMAGE_TAG} ${env.REPO_API}:latest 2>/dev/null || true"
-                        sh "docker rmi ${env.REPO_WEB}:${env.IMAGE_TAG} ${env.REPO_WEB}:latest 2>/dev/null || true"
+                        sh 'docker rmi $REPO_API:$IMAGE_TAG $REPO_API:latest 2>/dev/null || true'
+                        sh 'docker rmi $REPO_WEB:$IMAGE_TAG $REPO_WEB:latest 2>/dev/null || true'
                     }
                     cleanWs()
                 } catch (e) {
