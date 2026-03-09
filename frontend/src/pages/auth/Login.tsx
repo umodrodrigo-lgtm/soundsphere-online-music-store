@@ -74,24 +74,6 @@ export default function Login() {
             </button>
           </form>
 
-          {/* Demo credentials */}
-          <div className="mt-6 p-4 bg-white/5 rounded-2xl border border-white/10">
-            <p className="text-slate-400 text-xs mb-3 font-medium uppercase tracking-wider">Demo accounts</p>
-            {[
-              { label: 'Admin',    email: 'admin@soundsphere.com',  pass: 'Admin@123' },
-              { label: 'Artist',   email: 'aria.nova@example.com',  pass: 'password' },
-              { label: 'Customer', email: 'john.doe@example.com',   pass: 'password' },
-            ].map(({ label, email: e, pass }) => (
-              <button key={label}
-                onClick={() => { setEmail(e); setPassword(pass) }}
-                className="flex items-center justify-between w-full py-1.5 px-2 rounded-lg hover:bg-white/8 transition-colors text-left"
-              >
-                <span className="text-white text-sm font-medium">{label}</span>
-                <span className="text-slate-500 text-xs font-mono">{e}</span>
-              </button>
-            ))}
-          </div>
-
           <p className="text-center text-slate-500 text-sm mt-6">
             Don't have an account?{' '}
             <Link to="/register" className="text-purple-400 hover:text-purple-300 font-medium">Sign up free</Link>
