@@ -117,12 +117,20 @@ pipeline {
             echo "Deployed ${env.IMAGE_TAG} to EC2 successfully"
         }
         failure {
-            echo "Deployment FAILED — commit ${env.IMAGE_TAG}"
+            echo "Deployment FAILED — commit ${env.IMAGE_TAG ?: 'unknown'}"
         }
         always {
-            sh "docker rmi ${env.REPO_API}:${env.IMAGE_TAG} ${env.REPO_API}:latest 2>/dev/null || true"
-            sh "docker rmi ${env.REPO_WEB}:${env.IMAGE_TAG} ${env.REPO_WEB}:latest 2>/dev/null || true"
-            cleanWs()
+            script {
+                try {
+                    if (env.REPO_API && env.IMAGE_TAG) {
+                        sh "docker rmi ${env.REPO_API}:${env.IMAGE_TAG} ${env.REPO_API}:latest 2>/dev/null || true"
+                        sh "docker rmi ${env.REPO_WEB}:${env.IMAGE_TAG} ${env.REPO_WEB}:latest 2>/dev/null || true"
+                    }
+                    cleanWs()
+                } catch (e) {
+                    echo "Cleanup skipped: ${e.message}"
+                }
+            }
         }
     }
 }
