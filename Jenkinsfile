@@ -95,13 +95,12 @@ pipeline {
             steps {
                 sshagent(credentials: ['soundsphere-deploy-key']) {
                     sh '''
-                        ssh -o StrictHostKeyChecking=no $DEPLOY_USER@$DEPLOY_HOST "
-                            sleep 5
-                            STATUS=\$(curl -s -o /dev/null -w '%{http_code}' http://localhost/api/health)
-                            echo Health check: \$STATUS
-                            [ \"\$STATUS\" = '200' ] || { echo FAILED; exit 1; }
-                            echo Deployment OK
-                        "
+                        ssh -o StrictHostKeyChecking=no $DEPLOY_USER@$DEPLOY_HOST \
+                            'sleep 5
+                            STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost/api/health)
+                            echo "Health check: $STATUS"
+                            [ "$STATUS" = "200" ] || { echo "FAILED"; exit 1; }
+                            echo "Deployment OK"'
                     '''
                 }
             }
