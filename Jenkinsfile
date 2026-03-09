@@ -1,143 +1,124 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// SoundSphere — Jenkinsfile
+// Jenkins agent : Amazon Linux 2023 EC2
+// Flow          : GitHub push → Jenkins (AL2023) → build images
+//                 → push to Docker Hub → SSH deploy to app EC2 (AL2023)
+//
+// Jenkins credentials (Manage Jenkins → Credentials → Global):
+//   dockerhub-credentials  : Username with password  (Docker Hub username + password/token)
+//   soundsphere-deploy-host: Secret text             (app EC2 public IP or domain)
+//   soundsphere-deploy-key : SSH Username with private key  (app EC2 .pem)
+// ─────────────────────────────────────────────────────────────────────────────
+
 pipeline {
     agent any
 
-    // ── Trigger: GitHub webhook fires on every push ──────────────────
     triggers {
         githubPush()
     }
 
-    // ── Global environment ───────────────────────────────────────────
     environment {
-        // Jenkins credential IDs — configure these in:
-        //   Jenkins → Manage Jenkins → Credentials
-        SSH_CRED_ID      = 'soundsphere-deploy-key'   // SSH private key credential
-        DEPLOY_USER      = 'deploy'                    // SSH user on target server
-        DEPLOY_HOST      = 'your.server.ip.or.hostname'
-        DEPLOY_PATH      = '/var/www/soundsphere'      // root on the server
-        PM2_APP_NAME     = 'soundsphere-api'           // PM2 process name
-        NODE_ENV         = 'production'
+        // ── Docker Hub (binds DOCKERHUB_CREDS_USR and DOCKERHUB_CREDS_PSW) ──
+        DOCKERHUB_CREDS = credentials('dockerhub-credentials')
+        REPO_API        = "${DOCKERHUB_CREDS_USR}/soundsphere-api"
+        REPO_WEB        = "${DOCKERHUB_CREDS_USR}/soundsphere-web"
+
+        // ── App EC2 ──────────────────────────────────────────────────────────
+        DEPLOY_HOST     = credentials('soundsphere-deploy-host')  // secret text: IP or domain
+        DEPLOY_USER     = 'ec2-user'
+        DEPLOY_PATH     = '/opt/soundsphere'
+
+        // ── Image tag ─────────────────────────────────────────────────────────
+        IMAGE_TAG       = "${env.GIT_COMMIT?.take(8) ?: 'latest'}"
     }
 
     options {
-        // Keep last 10 builds; timeout the whole pipeline after 20 min
         buildDiscarder(logRotator(numToKeepStr: '10'))
-        timeout(time: 20, unit: 'MINUTES')
+        timeout(time: 30, unit: 'MINUTES')
         disableConcurrentBuilds()
         timestamps()
     }
 
     stages {
 
-        // ── 1. Checkout ──────────────────────────────────────────────
+        // ── 1. Checkout ───────────────────────────────────────────────
         stage('Checkout') {
             steps {
                 checkout scm
-                echo "Building branch: ${env.GIT_BRANCH}  commit: ${env.GIT_COMMIT?.take(8)}"
+                echo "Branch: ${env.GIT_BRANCH}   Tag: ${IMAGE_TAG}"
             }
         }
 
-        // ── 2. Build Frontend ────────────────────────────────────────
-        stage('Build Frontend') {
+        // ── 2. Build Docker images ────────────────────────────────────
+        stage('Build Images') {
             steps {
-                dir('frontend') {
-                    sh 'npm ci --prefer-offline'
-                    sh 'npm run build'
-                    // dist/ now contains the production static files
-                }
+                sh "docker build -t ${REPO_API}:${IMAGE_TAG} -t ${REPO_API}:latest ./backend"
+                sh "docker build -t ${REPO_WEB}:${IMAGE_TAG} -t ${REPO_WEB}:latest ./frontend"
             }
         }
 
-        // ── 3. Prepare Backend deps (production only) ────────────────
-        stage('Install Backend Dependencies') {
+        // ── 3. Push to Docker Hub ─────────────────────────────────────
+        stage('Push to Docker Hub') {
             steps {
-                dir('backend') {
-                    sh 'npm ci --omit=dev --prefer-offline'
-                }
+                sh "echo \"${DOCKERHUB_CREDS_PSW}\" | docker login -u \"${DOCKERHUB_CREDS_USR}\" --password-stdin"
+                sh "docker push ${REPO_API}:${IMAGE_TAG}"
+                sh "docker push ${REPO_API}:latest"
+                sh "docker push ${REPO_WEB}:${IMAGE_TAG}"
+                sh "docker push ${REPO_WEB}:latest"
+                sh "docker logout"
             }
         }
 
-        // ── 4. Deploy ────────────────────────────────────────────────
+        // ── 4. Deploy on app EC2 ──────────────────────────────────────
         stage('Deploy') {
             steps {
-                sshagent(credentials: [SSH_CRED_ID]) {
+                sshagent(credentials: ['soundsphere-deploy-key']) {
 
-                    // 4-a. Ensure directory structure exists on server
+                    // Copy compose file and database scripts to app server
                     sh """
-                        ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_HOST} '
-                            mkdir -p ${DEPLOY_PATH}/backend/uploads/audio
-                            mkdir -p ${DEPLOY_PATH}/backend/uploads/images/artists
-                            mkdir -p ${DEPLOY_PATH}/backend/uploads/images/albums
-                            mkdir -p ${DEPLOY_PATH}/backend/uploads/images/banners
-                            mkdir -p ${DEPLOY_PATH}/backend/uploads/images/avatars
-                            mkdir -p ${DEPLOY_PATH}/frontend/dist
-                        '
+                        scp -o StrictHostKeyChecking=no \
+                            docker-compose.prod.yml \
+                            ${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_PATH}/docker-compose.prod.yml
                     """
-
-                    // 4-b. Sync backend source (exclude uploads — user content stays)
                     sh """
-                        rsync -az --delete \
-                            --exclude='.env' \
-                            --exclude='node_modules/' \
-                            --exclude='uploads/' \
-                            backend/ \
-                            ${DEPLOY_HOST}:${DEPLOY_PATH}/backend/
-                    """
-
-                    // 4-c. Sync frontend build output
-                    sh """
-                        rsync -az --delete \
-                            frontend/dist/ \
-                            ${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_PATH}/frontend/dist/
-                    """
-
-                    // 4-d. Sync database scripts
-                    sh """
-                        rsync -az \
+                        scp -o StrictHostKeyChecking=no -r \
                             database/ \
                             ${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_PATH}/database/
                     """
 
-                    // 4-e. Install production backend deps on server, then reload PM2
+                    // SSH → pull new images → restart stack
                     sh """
                         ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_HOST} '
                             set -e
 
-                            cd ${DEPLOY_PATH}/backend
+                            cd ${DEPLOY_PATH}
 
-                            # Install/update production dependencies
-                            npm ci --omit=dev --prefer-offline
+                            IMAGE_TAG=${IMAGE_TAG} \
+                            DOCKERHUB_USER=${DOCKERHUB_CREDS_USR} \
+                            docker compose -f docker-compose.prod.yml pull
 
-                            # Gracefully reload if running, else start fresh
-                            if pm2 list | grep -q "${PM2_APP_NAME}"; then
-                                pm2 reload ${PM2_APP_NAME} --update-env
-                            else
-                                pm2 start src/server.js \
-                                    --name ${PM2_APP_NAME} \
-                                    --env production \
-                                    --max-memory-restart 512M \
-                                    --log ${DEPLOY_PATH}/logs/api.log
-                                pm2 save
-                            fi
+                            IMAGE_TAG=${IMAGE_TAG} \
+                            DOCKERHUB_USER=${DOCKERHUB_CREDS_USR} \
+                            docker compose -f docker-compose.prod.yml up -d --remove-orphans
+
+                            docker image prune -f
                         '
                     """
                 }
             }
         }
 
-        // ── 5. Smoke-test ────────────────────────────────────────────
+        // ── 5. Smoke test ─────────────────────────────────────────────
         stage('Verify') {
             steps {
-                sshagent(credentials: [SSH_CRED_ID]) {
+                sshagent(credentials: ['soundsphere-deploy-key']) {
                     sh """
                         ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_HOST} '
-                            sleep 3
-                            STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5000/api/health)
-                            echo "Health check HTTP status: \$STATUS"
-                            if [ "\$STATUS" != "200" ]; then
-                                echo "Health check FAILED"
-                                exit 1
-                            fi
-                            echo "Deployment verified successfully"
+                            sleep 5
+                            STATUS=\$(curl -s -o /dev/null -w "%{http_code}" http://localhost/api/health)
+                            echo "Health check: \$STATUS"
+                            [ "\$STATUS" = "200" ] || { echo "FAILED"; exit 1; }
+                            echo "Deployment OK"
                         '
                     """
                 }
@@ -145,18 +126,16 @@ pipeline {
         }
     }
 
-    // ── Post-pipeline notifications ──────────────────────────────────
     post {
         success {
-            echo "Deployment succeeded — ${env.GIT_BRANCH} @ ${env.GIT_COMMIT?.take(8)}"
+            echo "Deployed ${IMAGE_TAG} to EC2 successfully"
         }
         failure {
-            echo "Deployment FAILED — check the console output above"
-            // Add email/Slack notification here if needed:
-            // mail to: 'team@example.com', subject: "Build failed: ${env.JOB_NAME}"
+            echo "Deployment FAILED — commit ${IMAGE_TAG}"
         }
         always {
-            // Clean workspace to avoid stale artefacts on the Jenkins agent
+            sh "docker rmi ${REPO_API}:${IMAGE_TAG} ${REPO_API}:latest 2>/dev/null || true"
+            sh "docker rmi ${REPO_WEB}:${IMAGE_TAG} ${REPO_WEB}:latest 2>/dev/null || true"
             cleanWs()
         }
     }

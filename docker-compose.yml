@@ -1,0 +1,75 @@
+name: soundsphere
+
+services:
+
+  # ── MySQL 8 ──────────────────────────────────────────────────────
+  db:
+    image: mysql:8.0
+    container_name: soundsphere-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+      MYSQL_DATABASE:      ${DB_NAME}
+      MYSQL_USER:          ${DB_USER}
+      MYSQL_PASSWORD:      ${DB_PASSWORD}
+    volumes:
+      - db_data:/var/lib/mysql
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    networks:
+      - soundsphere-net
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost",
+             "-u", "${DB_USER}", "-p${DB_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # ── Backend API (Express) ─────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: soundsphere-api
+    restart: unless-stopped
+    env_file: ./backend/.env
+    environment:
+      DB_HOST: db           # override to reach the db service
+    volumes:
+      # Persist user uploads across container restarts / redeploys
+      - uploads_data:/app/uploads
+      # Mount seed scripts — run: docker compose exec backend node /database/seed-docker.js
+      - ./database:/database:ro
+    ports:
+      - "5000:5000"         # expose for direct access / health checks
+    networks:
+      - soundsphere-net
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # ── Frontend (Nginx + React build) ───────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: soundsphere-web
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    networks:
+      - soundsphere-net
+    depends_on:
+      - backend
+
+# ── Volumes ──────────────────────────────────────────────────────────
+volumes:
+  db_data:
+    driver: local
+  uploads_data:
+    driver: local
+
+# ── Network ──────────────────────────────────────────────────────────
+networks:
+  soundsphere-net:
+    driver: bridge

@@ -1,0 +1,73 @@
+# Production compose — used on the EC2 server.
+# Images are pulled from Docker Hub (pre-built by Jenkins).
+# Required env vars on the server (/opt/soundsphere/.env):
+#   DOCKERHUB_USER  e.g. yourusername
+#   IMAGE_TAG       e.g. a1b2c3d4  (git commit SHA, set by Jenkins)
+#   DB_ROOT_PASSWORD, DB_NAME, DB_USER, DB_PASSWORD
+
+name: soundsphere
+
+services:
+
+  # ── MySQL 8 ──────────────────────────────────────────────────────
+  db:
+    image: mysql:8.0
+    container_name: soundsphere-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+      MYSQL_DATABASE:      ${DB_NAME}
+      MYSQL_USER:          ${DB_USER}
+      MYSQL_PASSWORD:      ${DB_PASSWORD}
+    volumes:
+      - db_data:/var/lib/mysql
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    networks:
+      - soundsphere-net
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost",
+             "-u", "${DB_USER}", "-p${DB_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # ── Backend API ───────────────────────────────────────────────────
+  backend:
+    image: ${DOCKERHUB_USER}/soundsphere-api:${IMAGE_TAG}
+    container_name: soundsphere-api
+    restart: unless-stopped
+    env_file: ./backend/.env
+    environment:
+      DB_HOST: db
+    volumes:
+      - uploads_data:/app/uploads
+      - ./database:/database:ro
+    networks:
+      - soundsphere-net
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # ── Frontend (Nginx) ──────────────────────────────────────────────
+  frontend:
+    image: ${DOCKERHUB_USER}/soundsphere-web:${IMAGE_TAG}
+    container_name: soundsphere-web
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    networks:
+      - soundsphere-net
+    depends_on:
+      - backend
+
+volumes:
+  db_data:
+    driver: local
+  uploads_data:
+    driver: local
+
+networks:
+  soundsphere-net:
+    driver: bridge
