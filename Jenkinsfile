@@ -109,23 +109,27 @@ pipeline {
                         echo "Table exists check: '${tableExists}'"
 
                         if (tableExists == '0' || tableExists == '') {
-                            // Apply schema: pipe EC2 host file into mysql via docker exec -i
-                            // No database arg — schema.sql handles CREATE DATABASE + USE itself
+                            // Pipe schema.sql from Jenkins workspace — < is OUTSIDE ssh quotes
                             sh '''
                                 ssh -o StrictHostKeyChecking=no $DEPLOY_USER@$DEPLOY_HOST \
                                     'docker exec -i soundsphere-db \
-                                        mysql -u root -p"$(grep DB_ROOT_PASSWORD /opt/soundsphere/.env | cut -d= -f2)" \
-                                    < /opt/soundsphere/database/schema.sql'
+                                        mysql -u root -p"$(grep DB_ROOT_PASSWORD /opt/soundsphere/.env | cut -d= -f2)"' \
+                                    < database/schema.sql
                             '''
                             echo "Schema applied."
 
-                            // Copy seed files into the API container and run seed from inside
+                            // Pipe seed.sql from Jenkins workspace into container /tmp
                             sh '''
-                                ssh -o StrictHostKeyChecking=no $DEPLOY_USER@$DEPLOY_HOST '
-                                    docker cp /opt/soundsphere/database/seed.sql soundsphere-api:/tmp/seed.sql
-                                    docker cp /opt/soundsphere/database/seed-docker.js soundsphere-api:/tmp/seed-docker.js
-                                    docker exec soundsphere-api node /tmp/seed-docker.js
-                                '
+                                ssh -o StrictHostKeyChecking=no $DEPLOY_USER@$DEPLOY_HOST \
+                                    'docker exec -i soundsphere-api sh -c "cat > /tmp/seed.sql"' \
+                                    < database/seed.sql
+                            '''
+
+                            // Pipe seed-docker.js from Jenkins workspace into node stdin
+                            sh '''
+                                ssh -o StrictHostKeyChecking=no $DEPLOY_USER@$DEPLOY_HOST \
+                                    'docker exec -i soundsphere-api node -' \
+                                    < database/seed-docker.js
                             '''
                             echo "Seed complete."
                         } else {
