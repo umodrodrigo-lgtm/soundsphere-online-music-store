@@ -120,7 +120,8 @@ pipeline {
                                 echo "Schema applied."
 
                                 echo "Seeding database..."
-                                docker exec soundsphere-api node /database/seed-docker.js
+                                docker cp /opt/soundsphere/database/seed-docker.js soundsphere-api:/tmp/seed-docker.js
+                                docker exec soundsphere-api node /tmp/seed-docker.js
                                 echo "Seed complete."
                             else
                                 echo "Schema already exists, skipping."
