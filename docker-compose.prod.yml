@@ -21,6 +21,7 @@ services:
       MYSQL_PASSWORD:      ${DB_PASSWORD}
     volumes:
       - db_data:/var/lib/mysql
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
     networks:
       - soundsphere-net
     healthcheck:
@@ -41,6 +42,7 @@ services:
       DB_HOST: db
     volumes:
       - uploads_data:/app/uploads
+      - ./database:/database:ro
     networks:
       - soundsphere-net
     depends_on:

@@ -63,22 +63,19 @@ pipeline {
             steps {
                 // OCI standard labels: version, git revision, build timestamp
                 sh '''
-                    # Build context is project root so Dockerfile can reach database/schema.sql
                     docker build \
                         --label "org.opencontainers.image.version=${IMAGE_TAG}" \
                         --label "org.opencontainers.image.revision=${GIT_SHA}" \
                         --label "org.opencontainers.image.created=${BUILD_DATE}" \
                         --label "org.opencontainers.image.source=https://github.com/${DOCKERHUB_CREDS_USR}/soundsphere" \
-                        -f ./backend/Dockerfile \
                         -t $REPO_API:$IMAGE_TAG \
-                        .
+                        ./backend
 
                     docker build \
                         --label "org.opencontainers.image.version=${IMAGE_TAG}" \
                         --label "org.opencontainers.image.revision=${GIT_SHA}" \
                         --label "org.opencontainers.image.created=${BUILD_DATE}" \
                         --label "org.opencontainers.image.source=https://github.com/${DOCKERHUB_CREDS_USR}/soundsphere" \
-                        -f ./frontend/Dockerfile \
                         -t $REPO_WEB:$IMAGE_TAG \
                         ./frontend
                 '''
