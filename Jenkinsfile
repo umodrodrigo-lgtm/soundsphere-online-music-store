@@ -119,7 +119,13 @@ pipeline {
                             '''
                             echo "Schema applied."
 
-                            // Pipe seed script from Jenkins workspace directly into node stdin inside container
+                            // Pipe seed.sql into container /tmp first (fallback for volume mount)
+                            sh '''
+                                ssh -o StrictHostKeyChecking=no $DEPLOY_USER@$DEPLOY_HOST \
+                                    'docker exec -i soundsphere-api sh -c "cat > /tmp/seed.sql"' \
+                                    < database/seed.sql
+                            '''
+                            // Pipe seed-docker.js into node stdin inside container
                             sh '''
                                 ssh -o StrictHostKeyChecking=no $DEPLOY_USER@$DEPLOY_HOST \
                                     'docker exec -i soundsphere-api node -' \

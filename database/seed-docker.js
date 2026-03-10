@@ -20,7 +20,8 @@ async function seed() {
 
   try {
     // Run static SQL (genres, plans, artist profiles, albums, songs, etc.)
-    const sql = fs.readFileSync('/database/seed.sql', 'utf8');
+    const sqlPath = fs.existsSync('/database/seed.sql') ? '/database/seed.sql' : '/tmp/seed.sql';
+    const sql = fs.readFileSync(sqlPath, 'utf8');
     const statements = sql
       .split(';')
       .map(s => s.split('\n').filter(l => !l.trim().startsWith('--')).join('\n').trim())
