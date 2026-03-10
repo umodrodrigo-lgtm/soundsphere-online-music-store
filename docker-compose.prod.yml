@@ -2,7 +2,7 @@
 # Images are pulled from Docker Hub (pre-built by Jenkins).
 # Required env vars on the server (/opt/soundsphere/.env):
 #   DOCKERHUB_USER  e.g. yourusername
-#   IMAGE_TAG       e.g. a1b2c3d4  (git commit SHA, set by Jenkins)
+#   IMAGE_TAG       semver release (1.2.3) or CI build (main-42-a1b2c3d4)
 #   DB_ROOT_PASSWORD, DB_NAME, DB_USER, DB_PASSWORD
 
 name: soundsphere

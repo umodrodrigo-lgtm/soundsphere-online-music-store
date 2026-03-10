@@ -28,31 +28,56 @@ pipeline {
             steps {
                 checkout scm
                 script {
-                    def gitTag = sh(script: 'git tag --points-at HEAD | grep -E "^v[0-9]+\\.[0-9]+\\.[0-9]+" | head -1', returnStdout: true).trim()
+                    def gitTag   = sh(script: 'git tag --points-at HEAD | grep -E "^v[0-9]+\\.[0-9]+\\.[0-9]+" | head -1', returnStdout: true).trim()
                     def shortSha = sh(script: 'git rev-parse --short=8 HEAD', returnStdout: true).trim()
+                    // Normalise branch name: refs/heads/main → main, feature/foo → feature-foo
+                    def branch   = (env.GIT_BRANCH ?: 'unknown').replaceAll(/^refs\/heads\//, '').replaceAll(/[^a-zA-Z0-9._-]/, '-').toLowerCase()
 
                     if (gitTag) {
-                        // Tagged release: strip leading 'v' for Docker (v1.2.3 → 1.2.3)
-                        env.IMAGE_TAG     = gitTag.replaceFirst(/^v/, '')
+                        // Tagged release: v1.2.3 → IMAGE_TAG=1.2.3  aliases: 1.2  1
+                        def ver           = gitTag.replaceFirst(/^v/, '')
+                        def parts         = ver.tokenize('.')
+                        env.IMAGE_TAG     = ver                              // 1.2.3  (immutable)
+                        env.TAG_MINOR     = "${parts[0]}.${parts[1]}"       // 1.2    (mutable alias)
+                        env.TAG_MAJOR     = parts[0]                         // 1      (mutable alias)
                         env.IS_RELEASE    = 'true'
                     } else {
-                        // Untagged build: BUILD_NUMBER-gitsha
-                        env.IMAGE_TAG     = "${env.BUILD_NUMBER}-${shortSha}"
+                        // CI build: main-42-a1b2c3d4
+                        env.IMAGE_TAG     = "${branch}-${env.BUILD_NUMBER}-${shortSha}"
+                        env.TAG_MINOR     = ''
+                        env.TAG_MAJOR     = ''
                         env.IS_RELEASE    = 'false'
                     }
 
-                    env.REPO_API = "${env.DOCKERHUB_CREDS_USR}/soundsphere-api"
-                    env.REPO_WEB = "${env.DOCKERHUB_CREDS_USR}/soundsphere-web"
-                    echo "Branch: ${env.GIT_BRANCH}   Tag: ${env.IMAGE_TAG}   Release: ${env.IS_RELEASE}"
+                    env.GIT_SHA    = shortSha
+                    env.BRANCH     = branch
+                    env.BUILD_DATE = sh(script: 'date -u +%Y-%m-%dT%H:%M:%SZ', returnStdout: true).trim()
+                    env.REPO_API   = "${env.DOCKERHUB_CREDS_USR}/soundsphere-api"
+                    env.REPO_WEB   = "${env.DOCKERHUB_CREDS_USR}/soundsphere-web"
+                    echo "Branch: ${env.BRANCH}   Tag: ${env.IMAGE_TAG}   Release: ${env.IS_RELEASE}"
                 }
             }
         }
 
         stage('Build Images') {
             steps {
+                // OCI standard labels: version, git revision, build timestamp
                 sh '''
-                    docker build -t $REPO_API:$IMAGE_TAG -t $REPO_API:latest ./backend
-                    docker build -t $REPO_WEB:$IMAGE_TAG -t $REPO_WEB:latest ./frontend
+                    docker build \
+                        --label "org.opencontainers.image.version=${IMAGE_TAG}" \
+                        --label "org.opencontainers.image.revision=${GIT_SHA}" \
+                        --label "org.opencontainers.image.created=${BUILD_DATE}" \
+                        --label "org.opencontainers.image.source=https://github.com/${DOCKERHUB_CREDS_USR}/soundsphere" \
+                        -t $REPO_API:$IMAGE_TAG \
+                        ./backend
+
+                    docker build \
+                        --label "org.opencontainers.image.version=${IMAGE_TAG}" \
+                        --label "org.opencontainers.image.revision=${GIT_SHA}" \
+                        --label "org.opencontainers.image.created=${BUILD_DATE}" \
+                        --label "org.opencontainers.image.source=https://github.com/${DOCKERHUB_CREDS_USR}/soundsphere" \
+                        -t $REPO_WEB:$IMAGE_TAG \
+                        ./frontend
                 '''
             }
         }
@@ -61,10 +86,27 @@ pipeline {
             steps {
                 sh 'echo "$DOCKERHUB_CREDS_PSW" | docker login -u "$DOCKERHUB_CREDS_USR" --password-stdin'
                 sh '''
+                    # Always push the immutable version tag
                     docker push $REPO_API:$IMAGE_TAG
-                    docker push $REPO_API:latest
                     docker push $REPO_WEB:$IMAGE_TAG
-                    docker push $REPO_WEB:latest
+
+                    if [ "$IS_RELEASE" = "true" ]; then
+                        # Semver mutable aliases: 1.2  →  1  →  latest
+                        for REPO in $REPO_API $REPO_WEB; do
+                            docker tag $REPO:$IMAGE_TAG $REPO:$TAG_MINOR
+                            docker tag $REPO:$IMAGE_TAG $REPO:$TAG_MAJOR
+                            docker tag $REPO:$IMAGE_TAG $REPO:latest
+                            docker push $REPO:$TAG_MINOR
+                            docker push $REPO:$TAG_MAJOR
+                            docker push $REPO:latest
+                        done
+                    elif [ "$BRANCH" = "main" ]; then
+                        # Untagged main builds get an 'edge' alias (latest passing CI on main)
+                        docker tag $REPO_API:$IMAGE_TAG $REPO_API:edge
+                        docker tag $REPO_WEB:$IMAGE_TAG $REPO_WEB:edge
+                        docker push $REPO_API:edge
+                        docker push $REPO_WEB:edge
+                    fi
                 '''
                 sh 'docker logout'
             }
@@ -178,8 +220,14 @@ pipeline {
             script {
                 try {
                     if (env.REPO_API && env.IMAGE_TAG) {
-                        sh 'docker rmi $REPO_API:$IMAGE_TAG $REPO_API:latest 2>/dev/null || true'
-                        sh 'docker rmi $REPO_WEB:$IMAGE_TAG $REPO_WEB:latest 2>/dev/null || true'
+                        sh '''
+                            docker rmi $REPO_API:$IMAGE_TAG 2>/dev/null || true
+                            docker rmi $REPO_WEB:$IMAGE_TAG 2>/dev/null || true
+                            [ -n "$TAG_MINOR" ] && docker rmi $REPO_API:$TAG_MINOR $REPO_WEB:$TAG_MINOR 2>/dev/null || true
+                            [ -n "$TAG_MAJOR" ] && docker rmi $REPO_API:$TAG_MAJOR $REPO_WEB:$TAG_MAJOR 2>/dev/null || true
+                            docker rmi $REPO_API:latest $REPO_WEB:latest 2>/dev/null || true
+                            docker rmi $REPO_API:edge   $REPO_WEB:edge   2>/dev/null || true
+                        '''
                     }
                     cleanWs()
                 } catch (e) {
