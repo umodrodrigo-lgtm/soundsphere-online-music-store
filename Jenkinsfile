@@ -91,6 +91,46 @@ pipeline {
             }
         }
 
+        stage('Database Setup') {
+            steps {
+                sshagent(credentials: ['soundsphere-deploy-key']) {
+                    sh '''
+                        ssh -o StrictHostKeyChecking=no $DEPLOY_USER@$DEPLOY_HOST '
+                            set -e
+                            cd /opt/soundsphere
+
+                            # Wait for MySQL to be healthy
+                            echo "Waiting for MySQL..."
+                            until docker exec soundsphere-db mysqladmin ping -h localhost --silent 2>/dev/null; do
+                                sleep 3
+                            done
+                            echo "MySQL is ready."
+
+                            # Apply schema only if users table does not exist yet
+                            TABLE_EXISTS=$(docker exec soundsphere-db mysql -u root \
+                                -p"$(grep DB_ROOT_PASSWORD /opt/soundsphere/.env | cut -d= -f2)" \
+                                -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='"'"'soundsphere'"'"' AND table_name='"'"'users'"'"';" \
+                                --skip-column-names 2>/dev/null | tr -d "[:space:]")
+
+                            if [ "$TABLE_EXISTS" = "0" ] || [ -z "$TABLE_EXISTS" ]; then
+                                echo "Applying schema..."
+                                docker exec -i soundsphere-db mysql -u root \
+                                    -p"$(grep DB_ROOT_PASSWORD /opt/soundsphere/.env | cut -d= -f2)" \
+                                    soundsphere < /opt/soundsphere/database/schema.sql
+                                echo "Schema applied."
+
+                                echo "Seeding database..."
+                                docker exec soundsphere-api node /database/seed-docker.js
+                                echo "Seed complete."
+                            else
+                                echo "Schema already exists, skipping."
+                            fi
+                        '
+                    '''
+                }
+            }
+        }
+
         stage('Verify') {
             steps {
                 sshagent(credentials: ['soundsphere-deploy-key']) {
