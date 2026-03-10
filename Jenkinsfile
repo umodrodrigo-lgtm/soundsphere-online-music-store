@@ -110,11 +110,12 @@ pipeline {
 
                         if (tableExists == '0' || tableExists == '') {
                             // Copy schema.sql into the DB container and run it from inside
+                            // Uses $MYSQL_ROOT_PASSWORD which Docker Compose injects automatically
                             sh '''
                                 ssh -o StrictHostKeyChecking=no $DEPLOY_USER@$DEPLOY_HOST '
                                     docker cp /opt/soundsphere/database/schema.sql soundsphere-db:/tmp/schema.sql
-                                    docker exec soundsphere-db bash -c \
-                                        "mysql -u root -p\"$(grep DB_ROOT_PASSWORD /opt/soundsphere/.env | cut -d= -f2)\" < /tmp/schema.sql"
+                                    docker exec soundsphere-db sh -c \
+                                        "mysql -u root -p\$MYSQL_ROOT_PASSWORD < /tmp/schema.sql"
                                 '
                             '''
                             echo "Schema applied."
