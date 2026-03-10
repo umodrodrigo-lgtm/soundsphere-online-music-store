@@ -109,27 +109,23 @@ pipeline {
                         echo "Table exists check: '${tableExists}'"
 
                         if (tableExists == '0' || tableExists == '') {
-                            // Apply schema — schema.sql is on EC2 via scp
+                            // Copy schema.sql into the DB container and run it from inside
                             sh '''
                                 ssh -o StrictHostKeyChecking=no $DEPLOY_USER@$DEPLOY_HOST '
-                                    docker exec -i soundsphere-db mysql -u root \
-                                        -p"$(grep DB_ROOT_PASSWORD /opt/soundsphere/.env | cut -d= -f2)" \
-                                        soundsphere < /opt/soundsphere/database/schema.sql
+                                    docker cp /opt/soundsphere/database/schema.sql soundsphere-db:/tmp/schema.sql
+                                    docker exec soundsphere-db bash -c \
+                                        "mysql -u root -p\"$(grep DB_ROOT_PASSWORD /opt/soundsphere/.env | cut -d= -f2)\" < /tmp/schema.sql"
                                 '
                             '''
                             echo "Schema applied."
 
-                            // Pipe seed.sql into container /tmp first (fallback for volume mount)
+                            // Copy seed files into the API container and run seed from inside
                             sh '''
-                                ssh -o StrictHostKeyChecking=no $DEPLOY_USER@$DEPLOY_HOST \
-                                    'docker exec -i soundsphere-api sh -c "cat > /tmp/seed.sql"' \
-                                    < database/seed.sql
-                            '''
-                            // Pipe seed-docker.js into node stdin inside container
-                            sh '''
-                                ssh -o StrictHostKeyChecking=no $DEPLOY_USER@$DEPLOY_HOST \
-                                    'docker exec -i soundsphere-api node -' \
-                                    < database/seed-docker.js
+                                ssh -o StrictHostKeyChecking=no $DEPLOY_USER@$DEPLOY_HOST '
+                                    docker cp /opt/soundsphere/database/seed.sql soundsphere-api:/tmp/seed.sql
+                                    docker cp /opt/soundsphere/database/seed-docker.js soundsphere-api:/tmp/seed-docker.js
+                                    docker exec soundsphere-api node /tmp/seed-docker.js
+                                '
                             '''
                             echo "Seed complete."
                         } else {
