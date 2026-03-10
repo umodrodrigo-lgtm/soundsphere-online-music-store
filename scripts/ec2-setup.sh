@@ -1,5 +1,5 @@
 #!/bin/bash
-# ─────────────────────────────────────────────────────────────────────────────
+
 # SoundSphere — One-time EC2 setup script
 
 set -euo pipefail
