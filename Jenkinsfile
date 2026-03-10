@@ -109,14 +109,13 @@ pipeline {
                         echo "Table exists check: '${tableExists}'"
 
                         if (tableExists == '0' || tableExists == '') {
-                            // Copy schema.sql into the DB container and run it from inside
-                            // Uses $MYSQL_ROOT_PASSWORD which Docker Compose injects automatically
+                            // Apply schema: pipe EC2 host file into mysql via docker exec -i
+                            // No database arg — schema.sql handles CREATE DATABASE + USE itself
                             sh '''
-                                ssh -o StrictHostKeyChecking=no $DEPLOY_USER@$DEPLOY_HOST '
-                                    docker cp /opt/soundsphere/database/schema.sql soundsphere-db:/tmp/schema.sql
-                                    docker exec soundsphere-db sh -c \
-                                        "mysql -u root -p\$MYSQL_ROOT_PASSWORD < /tmp/schema.sql"
-                                '
+                                ssh -o StrictHostKeyChecking=no $DEPLOY_USER@$DEPLOY_HOST \
+                                    'docker exec -i soundsphere-db \
+                                        mysql -u root -p"$(grep DB_ROOT_PASSWORD /opt/soundsphere/.env | cut -d= -f2)" \
+                                    < /opt/soundsphere/database/schema.sql'
                             '''
                             echo "Schema applied."
 
