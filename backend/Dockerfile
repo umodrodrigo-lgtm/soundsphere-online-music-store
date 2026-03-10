@@ -12,6 +12,9 @@ RUN npm ci --omit=dev
 # Copy source
 COPY src/ ./src/
 
+# Embed database schema so the image is self-contained (no host file mounts needed)
+COPY database/schema.sql ./database/schema.sql
+
 # Upload folders must exist; actual files come from a mounted volume
 RUN mkdir -p uploads/audio \
              uploads/images/artists \
