@@ -1,10 +1,5 @@
 #!/bin/bash
 # ─────────────────────────────────────────────────────────────────────────────
-# SoundSphere — Jenkins Setup Script
-# Target OS : Amazon Linux 2023 (EC2)
-# Run as    : sudo bash jenkins-setup.sh
-# After     : Open http://<EC2-PUBLIC-IP>:8080 in browser
-# ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
 echo "=========================================="
