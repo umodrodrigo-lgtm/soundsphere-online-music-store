@@ -28,11 +28,22 @@ pipeline {
             steps {
                 checkout scm
                 script {
-                    // Set at runtime so env block immutability is bypassed
-                    env.IMAGE_TAG = sh(script: 'git rev-parse --short=8 HEAD', returnStdout: true).trim()
-                    env.REPO_API  = "${env.DOCKERHUB_CREDS_USR}/soundsphere-api"
-                    env.REPO_WEB  = "${env.DOCKERHUB_CREDS_USR}/soundsphere-web"
-                    echo "Branch: ${env.GIT_BRANCH}   Tag: ${env.IMAGE_TAG}   Repo: ${env.REPO_API}"
+                    def gitTag = sh(script: 'git tag --points-at HEAD | grep -E "^v[0-9]+\\.[0-9]+\\.[0-9]+" | head -1', returnStdout: true).trim()
+                    def shortSha = sh(script: 'git rev-parse --short=8 HEAD', returnStdout: true).trim()
+
+                    if (gitTag) {
+                        // Tagged release: strip leading 'v' for Docker (v1.2.3 → 1.2.3)
+                        env.IMAGE_TAG     = gitTag.replaceFirst(/^v/, '')
+                        env.IS_RELEASE    = 'true'
+                    } else {
+                        // Untagged build: BUILD_NUMBER-gitsha
+                        env.IMAGE_TAG     = "${env.BUILD_NUMBER}-${shortSha}"
+                        env.IS_RELEASE    = 'false'
+                    }
+
+                    env.REPO_API = "${env.DOCKERHUB_CREDS_USR}/soundsphere-api"
+                    env.REPO_WEB = "${env.DOCKERHUB_CREDS_USR}/soundsphere-web"
+                    echo "Branch: ${env.GIT_BRANCH}   Tag: ${env.IMAGE_TAG}   Release: ${env.IS_RELEASE}"
                 }
             }
         }
@@ -158,10 +169,10 @@ pipeline {
 
     post {
         success {
-            echo "Deployed ${env.IMAGE_TAG} to EC2 successfully"
+            echo "Deployed ${env.IMAGE_TAG} to EC2 successfully (release=${env.IS_RELEASE})"
         }
         failure {
-            echo "Deployment FAILED — commit ${env.IMAGE_TAG ?: 'unknown'}"
+            echo "Deployment FAILED — version ${env.IMAGE_TAG ?: 'unknown'}"
         }
         always {
             script {
